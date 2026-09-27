@@ -1,7 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useMemo, useRef, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Modal, NativeScrollEvent, NativeSyntheticEvent, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { colors, radius, shadow } from '@/theme';
+
+const ITEM_WIDTH = 64;
 
 type Props = {
   label: string;
@@ -16,51 +18,87 @@ type Props = {
 
 export function MetricPicker({ label, value, unit, icon, min, max, step = 1, onChange }: Props) {
   const [open, setOpen] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(0);
   const railRef = useRef<ScrollView | null>(null);
+  const initialScrollX = useRef(0);
+  const [translateY] = useState(() => new Animated.Value(520));
   const values = useMemo(() => {
     const count = Math.round((max - min) / step);
     return Array.from({ length: count + 1 }, (_, index) => Number((min + index * step).toFixed(1)));
   }, [max, min, step]);
-
   const selected = Number(value) || min;
-  const centerSelected = (viewportWidth: number) => {
-    const selectedIndex = Math.round((selected - min) / step);
-    const selectedCenter = 170 + selectedIndex * 42 + 21;
-    railRef.current?.scrollTo({ x: Math.max(0, selectedCenter - viewportWidth / 2), animated: false });
+  const selectedIndex = Math.max(0, Math.min(values.length - 1, Math.round((selected - min) / step)));
+
+  useEffect(() => {
+    if (!open) return;
+    translateY.setValue(520);
+    Animated.spring(translateY, { toValue: 0, damping: 24, stiffness: 230, mass: .9, useNativeDriver: true }).start();
+  }, [open, translateY]);
+
+  useEffect(() => {
+    if (!open || !viewportWidth) return;
+    railRef.current?.scrollTo({ x: initialScrollX.current, animated: false });
+  }, [open, viewportWidth]);
+
+  const openPicker = () => {
+    initialScrollX.current = selectedIndex * ITEM_WIDTH;
+    setOpen(true);
   };
-  const choose = (next: number) => {
-    onChange(String(next));
-    setOpen(false);
+
+  const close = () => {
+    Animated.timing(translateY, { toValue: 520, duration: 190, useNativeDriver: true }).start(() => setOpen(false));
+  };
+
+  const updateFromScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const index = Math.max(0, Math.min(values.length - 1, Math.round(event.nativeEvent.contentOffset.x / ITEM_WIDTH)));
+    const next = values[index];
+    if (next !== selected) onChange(String(next));
   };
 
   return <>
-    <Pressable onPress={() => setOpen(true)} style={({ pressed }) => [styles.card, pressed && styles.pressed]}>
+    <Pressable onPress={openPicker} style={({ pressed }) => [styles.card, pressed && styles.pressed]}>
       <View style={styles.icon}><Ionicons name={icon} size={19} color={colors.primary}/></View>
       <Text style={styles.label}>{label}</Text>
       <View style={styles.valueRow}><Text style={styles.value}>{value}</Text><Text style={styles.unit}>{unit}</Text></View>
       <View style={styles.edit}><Ionicons name="chevron-down" size={15} color={colors.primary}/></View>
     </Pressable>
-    <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
-      <Pressable style={styles.backdrop} onPress={() => setOpen(false)}>
-        <Pressable style={styles.sheet} onPress={() => undefined}>
+
+    <Modal visible={open} transparent animationType="none" onRequestClose={close}>
+      <View style={styles.backdrop}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={close}/>
+        <Animated.View style={[styles.sheet, { transform: [{ translateY }] }]}>
           <View style={styles.handle}/>
           <View style={styles.sheetTop}>
             <View><Text style={styles.sheetEyebrow}>PERSONAL DETAILS</Text><Text style={styles.sheetTitle}>Choose your {label.toLowerCase()}</Text></View>
-            <Pressable onPress={() => setOpen(false)} style={styles.close}><Ionicons name="close" size={20} color={colors.ink}/></Pressable>
+            <Pressable onPress={close} style={styles.close}><Ionicons name="close" size={20} color={colors.ink}/></Pressable>
           </View>
           <View style={styles.selectedValue}><Text style={styles.selectedNumber}>{selected}</Text><Text style={styles.selectedUnit}>{unit}</Text></View>
-          <ScrollView ref={railRef} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rail} onLayout={({ nativeEvent }) => centerSelected(nativeEvent.layout.width)}>
-            {values.map((item) => {
-              const active = item === selected;
-              return <Pressable key={item} onPress={() => choose(item)} style={[styles.tickWrap, active && styles.tickWrapOn]}>
-                <View style={[styles.tick, item % (step * 5) === 0 && styles.majorTick, active && styles.tickOn]}/>
-                {(active || item % (step * 5) === 0) ? <Text style={[styles.tickText, active && styles.tickTextOn]}>{item}</Text> : null}
-              </Pressable>;
-            })}
-          </ScrollView>
-          <View style={styles.hint}><Ionicons name="swap-horizontal" size={16} color={colors.primary}/><Text style={styles.hintText}>Swipe the scale or tap a number</Text></View>
-        </Pressable>
-      </Pressable>
+          <View style={styles.wheelFrame} onLayout={({ nativeEvent }) => setViewportWidth(nativeEvent.layout.width)}>
+            <View pointerEvents="none" style={styles.centerMarker}/>
+            <ScrollView
+              ref={railRef}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              snapToInterval={ITEM_WIDTH}
+              snapToAlignment="center"
+              decelerationRate="fast"
+              scrollEventThrottle={16}
+              onScroll={updateFromScroll}
+              contentContainerStyle={{ paddingHorizontal: Math.max(0, viewportWidth / 2 - ITEM_WIDTH / 2) }}
+            >
+              {values.map((item) => {
+                const active = item === selected;
+                return <View key={item} style={styles.wheelItem}>
+                  <Text style={[styles.wheelNumber, active && styles.wheelNumberOn]}>{item}</Text>
+                  <View style={[styles.tick, active && styles.tickOn]}/>
+                </View>;
+              })}
+            </ScrollView>
+          </View>
+          <View style={styles.hint}><Ionicons name="swap-horizontal" size={16} color={colors.primary}/><Text style={styles.hintText}>Swipe — the centered number is selected automatically</Text></View>
+          <Pressable onPress={close} style={styles.done}><Text style={styles.doneText}>Done</Text><Ionicons name="checkmark" size={18} color={colors.white}/></Pressable>
+        </Animated.View>
+      </View>
     </Modal>
   </>;
 }
@@ -74,24 +112,25 @@ const styles = StyleSheet.create({
   value: { fontSize: 26, fontWeight: '900', letterSpacing: -.8, color: colors.ink },
   unit: { fontSize: 11, fontWeight: '800', color: colors.muted, paddingBottom: 4 },
   edit: { position: 'absolute', right: 13, top: 13, width: 28, height: 28, borderRadius: 14, backgroundColor: colors.cream, alignItems: 'center', justifyContent: 'center' },
-  backdrop: { flex: 1, backgroundColor: 'rgba(8,20,15,.42)', justifyContent: 'flex-end' },
-  sheet: { width: '100%', maxWidth: 620, alignSelf: 'center', backgroundColor: colors.cream, borderTopLeftRadius: 32, borderTopRightRadius: 32, paddingHorizontal: 22, paddingBottom: 30, ...shadow },
+  backdrop: { flex: 1, backgroundColor: 'rgba(8,20,15,.46)', justifyContent: 'flex-end' },
+  sheet: { width: '100%', maxWidth: 620, alignSelf: 'center', backgroundColor: colors.cream, borderTopLeftRadius: 32, borderTopRightRadius: 32, paddingHorizontal: 22, paddingBottom: 26, ...shadow },
   handle: { width: 44, height: 5, borderRadius: 4, backgroundColor: colors.line, alignSelf: 'center', marginTop: 10, marginBottom: 22 },
   sheetTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   sheetEyebrow: { fontSize: 9, fontWeight: '900', letterSpacing: 1.1, color: colors.primary },
   sheetTitle: { fontSize: 23, fontWeight: '900', color: colors.ink, letterSpacing: -.6, marginTop: 4 },
   close: { width: 40, height: 40, borderRadius: 14, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center' },
-  selectedValue: { alignSelf: 'center', flexDirection: 'row', alignItems: 'flex-end', gap: 6, marginVertical: 25 },
-  selectedNumber: { fontSize: 56, fontWeight: '900', letterSpacing: -2.5, color: colors.ink },
+  selectedValue: { alignSelf: 'center', flexDirection: 'row', alignItems: 'flex-end', gap: 6, marginTop: 22, marginBottom: 16 },
+  selectedNumber: { fontSize: 58, fontWeight: '900', letterSpacing: -2.5, color: colors.ink },
   selectedUnit: { fontSize: 16, fontWeight: '800', color: colors.primary, paddingBottom: 9 },
-  rail: { alignItems: 'flex-start', paddingHorizontal: 170, height: 86 },
-  tickWrap: { width: 42, height: 76, alignItems: 'center', paddingTop: 8, borderRadius: 13 },
-  tickWrapOn: { backgroundColor: colors.surfaceAlt },
-  tick: { width: 2, height: 19, borderRadius: 2, backgroundColor: colors.line },
-  majorTick: { height: 30, backgroundColor: colors.muted },
-  tickOn: { height: 38, width: 3, backgroundColor: colors.primary },
-  tickText: { fontSize: 10, color: colors.muted, marginTop: 5 },
-  tickTextOn: { color: colors.primary, fontWeight: '900' },
-  hint: { alignSelf: 'center', flexDirection: 'row', gap: 7, alignItems: 'center', marginTop: 12 },
-  hintText: { fontSize: 11, color: colors.muted, fontWeight: '700' },
+  wheelFrame: { height: 100, overflow: 'hidden', justifyContent: 'center' },
+  centerMarker: { position: 'absolute', left: '50%', marginLeft: -30, width: 60, height: 84, borderRadius: 18, backgroundColor: colors.surfaceAlt, borderWidth: 1.5, borderColor: colors.primary },
+  wheelItem: { width: ITEM_WIDTH, height: 90, alignItems: 'center', justifyContent: 'center' },
+  wheelNumber: { fontSize: 17, fontWeight: '800', color: '#AAB4AF' },
+  wheelNumberOn: { fontSize: 25, color: colors.primaryDark, fontWeight: '900' },
+  tick: { width: 2, height: 13, borderRadius: 2, backgroundColor: colors.line, marginTop: 9 },
+  tickOn: { height: 20, width: 3, backgroundColor: colors.primary },
+  hint: { alignSelf: 'center', flexDirection: 'row', gap: 7, alignItems: 'center', marginTop: 7 },
+  hintText: { fontSize: 10, color: colors.muted, fontWeight: '700' },
+  done: { height: 52, marginTop: 20, borderRadius: radius.md, backgroundColor: colors.primary, flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center' },
+  doneText: { color: colors.white, fontWeight: '900', fontSize: 14 },
 });
