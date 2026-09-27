@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { colors, radius, shadow } from '@/theme';
 
@@ -16,12 +16,18 @@ type Props = {
 
 export function MetricPicker({ label, value, unit, icon, min, max, step = 1, onChange }: Props) {
   const [open, setOpen] = useState(false);
+  const railRef = useRef<ScrollView | null>(null);
   const values = useMemo(() => {
     const count = Math.round((max - min) / step);
     return Array.from({ length: count + 1 }, (_, index) => Number((min + index * step).toFixed(1)));
   }, [max, min, step]);
 
   const selected = Number(value) || min;
+  const centerSelected = (viewportWidth: number) => {
+    const selectedIndex = Math.round((selected - min) / step);
+    const selectedCenter = 170 + selectedIndex * 42 + 21;
+    railRef.current?.scrollTo({ x: Math.max(0, selectedCenter - viewportWidth / 2), animated: false });
+  };
   const choose = (next: number) => {
     onChange(String(next));
     setOpen(false);
@@ -43,7 +49,7 @@ export function MetricPicker({ label, value, unit, icon, min, max, step = 1, onC
             <Pressable onPress={() => setOpen(false)} style={styles.close}><Ionicons name="close" size={20} color={colors.ink}/></Pressable>
           </View>
           <View style={styles.selectedValue}><Text style={styles.selectedNumber}>{selected}</Text><Text style={styles.selectedUnit}>{unit}</Text></View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rail}>
+          <ScrollView ref={railRef} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rail} onLayout={({ nativeEvent }) => centerSelected(nativeEvent.layout.width)}>
             {values.map((item) => {
               const active = item === selected;
               return <Pressable key={item} onPress={() => choose(item)} style={[styles.tickWrap, active && styles.tickWrapOn]}>
