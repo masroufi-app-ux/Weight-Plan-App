@@ -48,7 +48,7 @@ export default function OTP() {
     if (!digits[index] && index > 0) refs.current[index - 1]?.focus();
   };
 
-  return <Page>
+  return <Page scroll={false}>
     <Header onBack={() => router.back()} title="Verify your email" subtitle={`We sent a 6-digit code to ${email}. Enter it below to save your plan.`}/>
     <View style={s.code}>{digits.map((digit, index) => <TextInput
       key={index}
